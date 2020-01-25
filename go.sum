@@ -1,0 +1,4 @@
+github.com/iris-contrib/go.uuid v2.0.0+incompatible h1:XZubAYg61/JwnJNbZilGjf3b3pB80+OQg2qf6c8BfWE=
+github.com/iris-contrib/go.uuid v2.0.0+incompatible/go.mod h1:iz2lgM/1UnEf1kP0L/+fafWORmlnuysV2EMP8MW+qe0=
+github.com/kataras/iris v11.1.1+incompatible h1:c2iRKvKLpTYMXKdVB8YP/+A67NtZFt9kFFy+ZwBhWD0=
+github.com/kataras/iris v11.1.1+incompatible/go.mod h1:ki9XPua5SyAJbIxDdsssxevgGrbpBmmvoQmo/A0IodY=

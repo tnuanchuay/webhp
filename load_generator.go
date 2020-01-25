@@ -3,8 +3,8 @@ package webhp
 import (
 	"context"
 	"fmt"
+	"github.com/kataras/iris/core/errors"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -17,11 +17,13 @@ const (
 type LoadGenerator struct {
 	Method string
 	Url    *url.URL
+	Data   DataContainer
 
 	actualRate            float64
 	delay                 time.Duration
-	responseResultChannel chan *ResponseResult
+	responseResultChannel chan *responseResult
 	callCount             int64
+	done                  chan struct{}
 }
 
 func NewLoadGenerator(method, rawurl string, request_per_sec float64) LoadGenerator {
@@ -31,34 +33,39 @@ func NewLoadGenerator(method, rawurl string, request_per_sec float64) LoadGenera
 	}
 
 	return LoadGenerator{
-		Url:                   u,
-		Method:                method,
+		Url:    u,
+		Method: method,
+		Data:   newDataContainer(),
+
 		delay:                 time.Duration(1 / request_per_sec * 1e9),
-		responseResultChannel: make(chan *ResponseResult, DEFAULT_DURATION_CHANNEL_BUFFER_SIZE),
+		responseResultChannel: make(chan *responseResult, DEFAULT_DURATION_CHANNEL_BUFFER_SIZE),
+		done:                  make(chan struct{}, 1),
 	}
 }
 
 func (lg LoadGenerator) Execute() {
 	go lg.responseResultCalculator()
 	for {
-		<- time.Tick(lg.delay)
-		go lg.httpCallHandler()
+		<-time.Tick(lg.delay)
+		select {
+		case <- lg.done:
+			fmt.Println("Average response time", lg.Data.AverageResponseTime())
+			return
+		default:
+			go lg.httpCallHandler()
+		}
 	}
+}
+
+func (lg LoadGenerator) Done() {
+	lg.done <- struct{}{}
 }
 
 func (lg *LoadGenerator) responseResultCalculator() {
 	for {
 		result := <-lg.responseResultChannel
-		if result == nil {
-			log.Println("timeout")
-			continue
-		}
-		if result.err != nil {
-			log.Println(result.err)
-			continue
-		}
-
-		fmt.Println(result.duration)
+		lg.Data.Add(*result)
+		fmt.Println(lg.Data.Count())
 	}
 }
 
@@ -73,10 +80,11 @@ func (lg LoadGenerator) httpCallHandler() {
 	}
 }
 
-func (lg LoadGenerator) invokeHttpCall(ctx context.Context) <-chan *ResponseResult {
-	done := make(chan *ResponseResult, 1)
-	var responseResult *ResponseResult = nil
-	defer func() { done <- responseResult }()
+func (lg LoadGenerator) invokeHttpCall(ctx context.Context) <-chan *responseResult {
+	done := make(chan *responseResult, 1)
+
+	rr := newErrorResponseResult(errors.New("http request timeout"))
+	defer func() { done <- &rr }()
 
 	req := http.Request{
 		Method: lg.Method,
@@ -97,8 +105,7 @@ func (lg LoadGenerator) invokeHttpCall(ctx context.Context) <-chan *ResponseResu
 		return done
 	}
 
-	r := newResponseResult(time.Now().Sub(start), int64(len(b)), res.StatusCode)
-	responseResult = &r
+	rr = newResponseResult(time.Now().Sub(start), int64(len(b)), res.StatusCode)
 
 	return done
 }
