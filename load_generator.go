@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
 )
 
 const (
-	DEFAULT_DURATION_CHANNEL_BUFFER_SIZE = 10
+	DEFAULT_DURATION_CHANNEL_BUFFER_SIZE = 100
 )
 
 type LoadGenerator struct {
@@ -38,13 +39,6 @@ func NewLoadGenerator(method, rawurl string, request_per_sec float64) LoadGenera
 }
 
 func (lg LoadGenerator) Execute() {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Println(len(lg.responseResultChannel))
-			panic(r)
-		}
-	}()
-
 	go lg.responseResultCalculator()
 	for {
 		<- time.Tick(lg.delay)
@@ -55,7 +49,12 @@ func (lg LoadGenerator) Execute() {
 func (lg *LoadGenerator) responseResultCalculator() {
 	for {
 		result := <-lg.responseResultChannel
+		if result == nil {
+			log.Println("timeout")
+			continue
+		}
 		if result.err != nil {
+			log.Println(result.err)
 			continue
 		}
 
