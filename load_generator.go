@@ -11,61 +11,105 @@ import (
 )
 
 const (
-	DEFAULT_DURATION_CHANNEL_BUFFER_SIZE = 100
+	DefaultDurationChannelBufferSize = 100
+	DefaultMaximumConcurrency        = 10000
 )
 
 type LoadGenerator struct {
-	Method string
-	Url    *url.URL
-	Data   DataContainer
+	Method   string
+	Url      *url.URL
+	Data     DataContainer
+	Duration time.Duration
 
+	startTestingTime      time.Time
+	stopTestingTime       time.Time
 	actualRate            float64
 	delay                 time.Duration
 	responseResultChannel chan *responseResult
 	callCount             int64
-	done                  chan struct{}
+	concurrentMeasurementChannel chan struct{}
+	maximumConcurrency int
 }
 
-func NewLoadGenerator(method, rawurl string, request_per_sec float64) LoadGenerator {
+func NewLoadGenerator(method, rawurl string, request_per_sec float64, duration time.Duration) LoadGenerator {
 	u, err := url.Parse(rawurl)
 	if err != nil {
 		panic(err)
 	}
 
 	return LoadGenerator{
-		Url:    u,
-		Method: method,
-		Data:   newDataContainer(),
+		Url:      u,
+		Method:   method,
+		Data:     newDataContainer(),
+		Duration: duration,
 
 		delay:                 time.Duration(1 / request_per_sec * 1e9),
-		responseResultChannel: make(chan *responseResult, DEFAULT_DURATION_CHANNEL_BUFFER_SIZE),
-		done:                  make(chan struct{}, 1),
+		responseResultChannel: make(chan *responseResult, DefaultDurationChannelBufferSize),
+		concurrentMeasurementChannel: make(chan struct{}, DefaultMaximumConcurrency),
+		maximumConcurrency: 0,
 	}
 }
 
-func (lg LoadGenerator) Execute() {
-	go lg.responseResultCalculator()
+func (lg LoadGenerator) PrintInfo() {
+	duration := time.Now().Sub(lg.startTestingTime)
+	fmt.Println("Average response time", lg.Data.AverageResponseTime())
+	fmt.Println("Maximum concurrency", lg.maximumConcurrency)
+	lg.Data.PrintHttpStatus()
+	fmt.Println("Testing Duration", duration)
+	fmt.Println("Throughput", lg.Data.Count()/int(duration.Seconds()), "request/sec")
+}
+
+func (lg *LoadGenerator) Execute() {
+	go lg.startBackgroundProcess()
+	go lg.captureMaximumConcurrency()
+
+	lg.startTestingTime = time.Now()
+	done := time.After(lg.Duration * time.Second)
+
 	for {
-		<-time.Tick(lg.delay)
 		select {
-		case <- lg.done:
-			fmt.Println("Average response time", lg.Data.AverageResponseTime())
-			lg.Data.PrintHttpStatus()
+		case <-done:
+			lg.stopTestingTime = time.Now()
+			lg.PrintInfo()
+
+			for len(lg.responseResultChannel) != 0 {
+			}
 			return
 		default:
 			go lg.httpCallHandler()
+			<-time.Tick(lg.delay)
 		}
 	}
 }
 
-func (lg LoadGenerator) Done() {
-	lg.done <- struct{}{}
+func (lg *LoadGenerator) startBackgroundProcess() {
+	done := time.After(lg.Duration * time.Second)
+
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			result := <-lg.responseResultChannel
+			lg.Data.Add(*result)
+		}
+
+	}
 }
 
-func (lg *LoadGenerator) responseResultCalculator() {
+func (lg *LoadGenerator) captureMaximumConcurrency() {
+	done := time.After(lg.Duration * time.Second)
+
 	for {
-		result := <-lg.responseResultChannel
-		lg.Data.Add(*result)
+		select {
+		case <-done:
+			return
+		default:
+			l := len(lg.concurrentMeasurementChannel)
+			if lg.maximumConcurrency < l {
+				lg.maximumConcurrency = l
+			}
+		}
 	}
 }
 
@@ -80,7 +124,7 @@ func (lg LoadGenerator) httpCallHandler() {
 	}
 }
 
-func (lg LoadGenerator) invokeHttpCall(ctx context.Context) <-chan *responseResult {
+func (lg *LoadGenerator) invokeHttpCall(ctx context.Context) <-chan *responseResult {
 	done := make(chan *responseResult, 1)
 
 	rr := newErrorResponseResult(errors.New("http request timeout"))
@@ -90,10 +134,16 @@ func (lg LoadGenerator) invokeHttpCall(ctx context.Context) <-chan *responseResu
 		Method: lg.Method,
 		URL:    lg.Url,
 	}
+
+	lg.concurrentMeasurementChannel <- struct{}{}
+
 	client := http.Client{}
+	defer client.CloseIdleConnections()
 
 	start := time.Now()
 	res, err := client.Do(&req)
+
+	defer res.Body.Close()
 	if err != nil {
 		newErrorResponseResult(err)
 		return done
@@ -104,6 +154,8 @@ func (lg LoadGenerator) invokeHttpCall(ctx context.Context) <-chan *responseResu
 		newErrorResponseResult(err)
 		return done
 	}
+
+	<-lg.concurrentMeasurementChannel
 
 	rr = newResponseResult(time.Now().Sub(start), int64(len(b)), res.StatusCode)
 

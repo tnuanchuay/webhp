@@ -54,7 +54,6 @@ func (c *DataContainer) PrintHttpStatus() {
 	for _, d := range c.Data {
 		if d.err != nil {
 			httpError = httpError + 1
-			fmt.Println(d)
 			continue
 		}
 
@@ -70,7 +69,6 @@ func (c *DataContainer) PrintHttpStatus() {
 		case '5':
 			count5xx = count5xx + 1
 		default:
-			fmt.Println(d)
 		}
 	}
 	fmt.Println("total requests", c.Count())
