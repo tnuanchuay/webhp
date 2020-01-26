@@ -7,9 +7,9 @@ import (
 )
 
 func TestLoadGenerator(t *testing.T){
-	lg := NewLoadGenerator(http.MethodGet,"http://127.0.0.1:8080", 10000)
+	lg := NewLoadGenerator(http.MethodGet,"http://127.0.0.1:8080", 755)
 	go func (){
-		<- time.Tick(3 * time.Second)
+		<- time.Tick(60 * time.Second)
 		lg.Done()
 	}()
 

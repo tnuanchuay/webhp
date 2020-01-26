@@ -50,6 +50,7 @@ func (lg LoadGenerator) Execute() {
 		select {
 		case <- lg.done:
 			fmt.Println("Average response time", lg.Data.AverageResponseTime())
+			lg.Data.PrintHttpStatus()
 			return
 		default:
 			go lg.httpCallHandler()
@@ -65,7 +66,6 @@ func (lg *LoadGenerator) responseResultCalculator() {
 	for {
 		result := <-lg.responseResultChannel
 		lg.Data.Add(*result)
-		fmt.Println(lg.Data.Count())
 	}
 }
 
